@@ -15,13 +15,27 @@ def get_device():
     return 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-# Util function to apply reward-discounting scheme on a list of instant-reward (from eq 8 of HW1)
+# Util function to apply reward-discounting scheme on a list of instant-reward (from eq 8)
 def apply_discount(raw_reward, gamma=0.99):
     # TODO: Compute discounted_rtg_reward (as a list) from raw_reward
     # HINT: Reverse the input list, keep a running-average. Reverse again to get the correct order.
-
-    discounted_rtg_reward = ???
+    raw_reward.reverse()
+    sum = 0
+    discounted_rtg_reward = []
+    for reward in raw_reward:
+        sum = sum*gamma+reward
+        discounted_rtg_reward.append(sum)
+    raw_reward.reverse()
+    discounted_rtg_reward.reverse()
     # Normalization
     discounted_rtg_reward = np.array(discounted_rtg_reward)
     discounted_rtg_reward = discounted_rtg_reward - np.mean(discounted_rtg_reward) / (np.std(discounted_rtg_reward) + np.finfo(np.float32).eps)
     return torch.tensor(discounted_rtg_reward, dtype=torch.float32, device=get_device())
+
+
+
+# Util function to apply reward-return (cumulative reward) on a list of instant-reward (from eq 6)
+def apply_return(raw_reward):
+    # Compute r_reward (as a list) from raw_reward
+    r_reward = [np.sum(raw_reward)]
+    return torch.tensor(r_reward, dtype=torch.float32, device=get_device())

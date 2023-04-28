@@ -32,7 +32,11 @@ class ACTrainer:
             self.update_actor_net()
             # TODO: Calculate avg reward for this rollout
             # HINT: Add all the rewards from each trajectory. There should be "ntr" trajectories within a single rollout.
-            avg_ro_reward = ???
+            sum_of_rewards = 0
+            reward_list = self.trajectory.get('reward')
+            for trajectory_reward_list in reward_list:\
+                sum_of_rewards += apply_return(trajectory_reward_list)
+            avg_ro_reward = (sum_of_rewards/len(reward_list)).item()
             print(f'End of rollout {ro_idx}: Average trajectory reward is {avg_ro_reward: 0.2f}')
             # Append average rollout reward into a list
             list_ro_reward.append(avg_ro_reward)
@@ -104,13 +108,22 @@ class ActorNet(nn.Module):
         super(ActorNet, self).__init__()
         # TODO: Define the actor net
         # HINT: You can use nn.Sequential to set up a 2 layer feedforward neural network.
-        self.ff_net = ???
+        self.ff_net = nn.Sequential(
+            nn.Linear(input_size, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_size),
+            nn.Softmax()
+        )
 
     def forward(self, obs):
         # TODO: Forward pass of actor net
         # HINT: (use Categorical from torch.distributions to draw samples and log-prob from model output)
-        action_index = ???
-        log_prob = ???
+        probabilities = self.ff_net(obs)
+        distribution = Categorical(probabilities)
+        action_index = distribution.sample()
+        log_prob = distribution.log_prob(action_index)
         return action_index, log_prob
 
 
@@ -120,7 +133,14 @@ class CriticNet(nn.Module):
         super(CriticNet, self).__init__()
         # TODO: Define the critic net
         # HINT: You can use nn.Sequential to set up a 2 layer feedforward neural network.
-        self.ff_net = ???
+        self.ff_net = nn.Sequential(
+            nn.Linear(input_size, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_size),
+            nn.Softmax()
+        )
 
     def forward(self, obs):
         # TODO: Forward pass of critic net
