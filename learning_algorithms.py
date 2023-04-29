@@ -62,14 +62,14 @@ class ACTrainer:
         # TODO: Update target values
         # HINT: Use definition of target-estimate from equation 7 of teh assignment PDF
 
-        self.trajectory['state_value'] = ???
-        self.trajectory['target_value'] = ???
+        self.trajectory['state_value'] = ''#???
+        self.trajectory['target_value'] = ''#???
 
     def estimate_advantage(self, gamma=0.99):
         # TODO: Estimate advantage
         # HINT: Use definition of advantage-estimate from equation 6 of teh assignment PDF
 
-        self.trajectory['advantage'] = ???
+        self.trajectory['advantage'] = ''#???
 
     def update_actor_net(self):
         actor_loss = self.estimate_actor_loss_function()
@@ -80,7 +80,7 @@ class ACTrainer:
     def estimate_critic_loss_function(self):
         # TODO: Compute critic loss function
         # HINT: Use definition of critic-loss from equation 7 of teh assignment PDF. It is the MSE between target-values and state-values.
-        critic_loss = ???
+        critic_loss = ''#???
         return critic_loss
 
     def estimate_actor_loss_function(self):
@@ -88,7 +88,7 @@ class ACTrainer:
         for t_idx in range(self.params['n_trajectory_per_rollout']):
             advantage = apply_discount(self.trajectory['advantage'][t_idx])
             # TODO: Compute actor loss function
-        actor_loss = ???
+        actor_loss = ''#???
         return actor_loss
 
     def generate_video(self, max_frame=1000):
@@ -145,7 +145,7 @@ class CriticNet(nn.Module):
     def forward(self, obs):
         # TODO: Forward pass of critic net
         # HINT: (get state value from the network using the current observation)
-        state_value = ???
+        state_value = ''#???
         return state_value
 
 
@@ -211,7 +211,7 @@ class DQNTrainer:
                 next_obs, reward, terminated, truncated, info = self.env.step(action)
                 if terminated or truncated:
                     self.epsilon = max(self.epsilon*self.params['epsilon_decay'], self.params['min_epsilon'])
-                    next_obs = None
+                    #next_obs = None
                     self.replay_memory.push(obs, action, reward, next_obs, not (terminated or truncated))
                     list_ep_reward.append(ep_len)
                     print(f'End of episode {idx_episode} with epsilon = {self.epsilon: 0.2f} and reward = {ep_len}, memory = {len(self.replay_memory.buffer)}')
@@ -234,8 +234,15 @@ class DQNTrainer:
         # TODO: Implement the epsilon-greedy behavior
         # HINT: The agent will will choose action based on maximum Q-value with
         # '1-ε' probability, and a random action with 'ε' probability.
-        action = ???
-        return action
+        with torch.no_grad():
+            qValues = self.q_net(torch.tensor(obs, device=get_device()))
+            if(np.random.random_sample() < self.epsilon ):
+                return self.env.action_space.sample()
+            else:
+                maxQValue = qValues.max()
+                actionWithMaxQValue = torch.where(qValues == maxQValue)[0][0].item()
+                
+                return actionWithMaxQValue
 
     def update_q_net(self):
         if len(self.replay_memory.buffer) < self.params['batch_size']:
@@ -244,11 +251,36 @@ class DQNTrainer:
         # HINT: You should draw a batch of random samples from the replay buffer
         # and train your Q-net with that sampled batch.
 
-        predicted_state_value = ???
-        target_value = ???
+        observations, actions, rewards, next_observations, statuses = self.replay_memory.sample(self.params['batch_size'])
+
+        observations = torch.tensor(observations, device=get_device())
+        actions = torch.tensor(actions, device=get_device())
+        rewards = torch.tensor(rewards, device=get_device())
+        #next_observations = [obs if obs is not None else np.nan for obs in next_observations]
+
+        next_observations = torch.tensor(next_observations, device=get_device())
+        statuses = torch.tensor(statuses, device=get_device())
+        
+    
+        # For Predicted Value
+        # This contains qValues for all possible actions for each observation in observations
+        qValues = self.q_net(observations)
+        
+        #predicted_state_values = torch.tensor(qValues[range(self.params['batch_size']), i] for i in actions)
+        predicted_state_values = qValues[range(self.params['batch_size']), actions]
+        
+        # For Target Value
+        
+            
+        targetQValues = self.target_net(next_observations)
+        
+        target_values = targetQValues.max(1)[0]
+        target_values[statuses == False] = 0
+        #print(target_values)
+        target_values = rewards + self.params['gamma'] * target_values
 
         criterion = nn.SmoothL1Loss()
-        q_loss = criterion(predicted_state_value, target_value.unsqueeze(1))
+        q_loss = criterion(predicted_state_values.unsqueeze(1), target_values.unsqueeze(1))
         self.optimizer.zero_grad()
         q_loss.backward()
         self.optimizer.step()
@@ -278,21 +310,38 @@ class ReplayMemory:
     # TODO: Implement replay buffer
     # HINT: You can use python data structure deque to construct a replay buffer
     def __init__(self, capacity):
-        ???
+        self.buffer = deque(maxlen=capacity)
 
     def push(self, *args):
-        ???
+        self.buffer.append([args[0], args[1], args[2], args[3], args[4]])
 
     def sample(self, n_samples):
-        ???
+        samples = random.sample(self.buffer, n_samples)
+        observations, actions, rewards, next_observations, statuses = list(), list(), list(), list(), list()
+        for sample in samples:
+            observations.append(sample[0])
+            actions.append(sample[1])
+            rewards.append(sample[2])
+            if(sample[3] is None):
+                next_observations.append(np.zeros(4))
+            else:
+                next_observations.append(sample[3])
+            statuses.append(sample[4])
+        return observations, actions, rewards, next_observations, statuses
 
 
 class QNet(nn.Module):
     # TODO: Define Q-net
-    # This is identical to policy network from HW1
+    # This is identical to policy network from HW1 but we are not using Softmax layer at the end as this network gives the Q value but not the probabilities unlike PG Method
     def __init__(self, input_size, output_size, hidden_dim):
         super(QNet, self).__init__()
-        self.ff_net = ???
+        self.ff_net =  nn.Sequential(
+            nn.Linear(input_size, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_size)
+        )
 
     def forward(self, obs):
         return self.ff_net(obs)
