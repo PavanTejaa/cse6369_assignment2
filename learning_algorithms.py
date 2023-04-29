@@ -264,21 +264,30 @@ class DQNTrainer:
     
         # For Predicted Value
         # This contains qValues for all possible actions for each observation in observations
-        qValues = self.q_net(observations)
+        qValues = self.q_net.forward(observations)
         
         #predicted_state_values = torch.tensor(qValues[range(self.params['batch_size']), i] for i in actions)
+        # print(qValues[1])
+        # print(actions[1])
         predicted_state_values = qValues[range(self.params['batch_size']), actions]
-        
+        # print(predicted_state_values[1])
         # For Target Value
         
-            
-        targetQValues = self.target_net(next_observations)
+        with torch.no_grad():    
+            targetQValues = self.target_net(next_observations)
         
         target_values = targetQValues.max(1)[0]
         target_values[statuses == False] = 0
         #print(target_values)
         target_values = rewards + self.params['gamma'] * target_values
 
+        # operation = lambda x: torch.tensor(round(x.item()))
+        # new_tensor_list = [operation(x) for x in target_values]
+        # self.updateSteps += 1
+        # print('Update Step: ', self.updateSteps)
+        # print('Predicted Value:', predicted_state_values)
+        # print('Target Value:', new_tensor_list)
+        
         criterion = nn.SmoothL1Loss()
         q_loss = criterion(predicted_state_values.unsqueeze(1), target_values.unsqueeze(1))
         self.optimizer.zero_grad()
@@ -322,10 +331,7 @@ class ReplayMemory:
             observations.append(sample[0])
             actions.append(sample[1])
             rewards.append(sample[2])
-            if(sample[3] is None):
-                next_observations.append(np.zeros(4))
-            else:
-                next_observations.append(sample[3])
+            next_observations.append(sample[3])
             statuses.append(sample[4])
         return observations, actions, rewards, next_observations, statuses
 
