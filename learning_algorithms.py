@@ -45,7 +45,7 @@ class ACTrainer:
         with open(pkl_file_name, 'wb') as f:
             pickle.dump(list_ro_reward, f)
         # Save a video of the trained agent playing
-        self.generate_video()
+        self.generate_video(5000)
         # Close environment
         self.env.close()
 
@@ -61,16 +61,56 @@ class ACTrainer:
     def update_target_value(self, gamma=0.99):
         # TODO: Update target values
         # HINT: Use definition of target-estimate from equation 7 of teh assignment PDF
-
-        self.trajectory['state_value'] = ''#???
-        self.trajectory['target_value'] = ''#???
+        
+        trajectory_observations = self.trajectory['obs']
+        trajectory_rewards = self.trajectory['reward']
+        trajectory_state_values = list()
+        trajectory_target_values = list()
+        
+        for trajectory_idx in range(len(trajectory_observations)):
+            trajectory_observations_idx = trajectory_observations[trajectory_idx]
+            trajectory_rewards_idx = trajectory_rewards[trajectory_idx]
+            state_values_list = list()
+            target_values_list = list()
+            
+            for i in range(len(trajectory_observations_idx)):
+                current_state = trajectory_observations_idx[i]
+                # Setting next state as None if current state is last state of trajectory
+                next_state = trajectory_observations_idx[i+1] if (i+1 < len(trajectory_observations_idx)) else None
+                
+                state_value = self.critic_net(current_state)
+                if(next_state is not None):
+                    target_value = trajectory_rewards_idx[i] + gamma*self.critic_net(next_state)
+                else:
+                    target_value = trajectory_rewards_idx[i] 
+                state_values_list.append(state_value)
+                target_values_list.append(target_value)
+            trajectory_state_values.append(state_values_list)
+            trajectory_target_values.append(target_values_list)
+            
+        self.trajectory['state_value'] = trajectory_state_values
+        self.trajectory['target_value'] = trajectory_target_values
+        
 
     def estimate_advantage(self, gamma=0.99):
         # TODO: Estimate advantage
         # HINT: Use definition of advantage-estimate from equation 6 of teh assignment PDF
-
-        self.trajectory['advantage'] = ''#???
-
+        #self.trajectory['advantage'] = [a - b for a, b in zip(self.trajectory['target_value'], self.trajectory['state_value'])]
+        state_values = self.trajectory['state_value']
+        target_values = self.trajectory['target_value']
+        advantage_values = list()
+        for trajectory_idx in range(len(state_values)):
+            state_values_idx = state_values[trajectory_idx]
+            target_values_idx = target_values[trajectory_idx]
+            advantage_values_idx = list()
+            for i in range(len(state_values_idx)):
+                adv = target_values_idx[i] - state_values_idx[i]
+                advantage_values_idx.append(adv)
+            advantage_values.append(advantage_values_idx)
+            
+        self.trajectory['advantage'] = advantage_values
+        
+        
     def update_actor_net(self):
         actor_loss = self.estimate_actor_loss_function()
         actor_loss.backward()
@@ -80,26 +120,48 @@ class ACTrainer:
     def estimate_critic_loss_function(self):
         # TODO: Compute critic loss function
         # HINT: Use definition of critic-loss from equation 7 of teh assignment PDF. It is the MSE between target-values and state-values.
-        critic_loss = ''#???
+        
+        state_values = self.trajectory['state_value']
+        target_values = self.trajectory['target_value']
+        #print(state_values[0])
+        #print(target_values[0])
+        #print(len(self.trajectory['obs']))
+        
+        critic_loss = 0
+        for trajectory_idx in range(len(state_values)):
+            state_values_idx = state_values[trajectory_idx]
+            target_values_idx = target_values[trajectory_idx]
+            for i in range(len(state_values_idx)):
+                critic_loss += (state_values_idx[i] - target_values_idx[i]) ** 2
+
         return critic_loss
 
     def estimate_actor_loss_function(self):
         actor_loss = list()
+        log_probabilities_list = self.trajectory.get('log_prob')
         for t_idx in range(self.params['n_trajectory_per_rollout']):
+            log_probabilities_list_idx = log_probabilities_list[t_idx]
             advantage = apply_discount(self.trajectory['advantage'][t_idx])
             # TODO: Compute actor loss function
-        actor_loss = ''#???
+            loss_idx = 0
+            for idx in range(len(log_probabilities_list_idx)):
+                loss_idx = loss_idx + log_probabilities_list_idx[idx]*advantage[idx]
+            actor_loss.append(loss_idx*-1)
+        actor_loss = torch.stack(actor_loss).mean()
         return actor_loss
 
     def generate_video(self, max_frame=1000):
-        self.env = gym.make(self.params['env_name'], render_mode='rgb_array_list')
-        obs, _ = self.env.reset()
-        for _ in range(max_frame):
-            action_idx, log_prob = self.actor_net(torch.tensor(obs, dtype=torch.float32, device=get_device()))
-            obs, reward, terminated, truncated, info = self.env.step(self.agent.action_space[action_idx.item()])
-            if terminated or truncated:
-                break
-        save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
+        # Generating the video multiple times with random initial states instead of just oneand saving them in folder structure according to the trails
+        print('MAX FRAME:', max_frame)
+        for i in range(20):
+            self.env = gym.make(self.params['env_name'], render_mode='rgb_array_list')
+            obs, _ = self.env.reset()
+            for _ in range(max_frame):
+                action_idx, log_prob = self.actor_net(torch.tensor(obs, dtype=torch.float32, device=get_device()))
+                obs, reward, terminated, truncated, info = self.env.step(self.agent.action_space[action_idx.item()])
+                if terminated or truncated:
+                    break
+            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
 
 
 # CLass for actor-net
@@ -138,14 +200,13 @@ class CriticNet(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, output_size),
-            nn.Softmax()
+            nn.Linear(hidden_dim, output_size)
         )
 
     def forward(self, obs):
         # TODO: Forward pass of critic net
         # HINT: (get state value from the network using the current observation)
-        state_value = ''#???
+        state_value = self.ff_net(obs)
         return state_value
 
 
@@ -226,7 +287,7 @@ class DQNTrainer:
         with open(pkl_file_name, 'wb') as f:
             pickle.dump(list_ep_reward, f)
         # Save a video of the trained agent playing
-        self.generate_video()
+        self.generate_video(5000)
         # Close environment
         self.env.close()
 
@@ -304,15 +365,18 @@ class DQNTrainer:
         self.target_net.load_state_dict(target_net_state_dict)
 
     def generate_video(self, max_frame=1000):
-        self.env = gym.make(self.params['env_name'], render_mode='rgb_array_list')
-        self.epsilon = 0.0
-        obs, _ = self.env.reset()
-        for _ in range(max_frame):
-            action = self.get_action(obs)
-            obs, reward, terminated, truncated, info = self.env.step(action)
-            if terminated or truncated:
-                break
-        save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
+         # Generating the video multiple times with random initial states instead of just oneand saving them in folder structure according to the trails
+        print('MAX FRAME:', max_frame)
+        for i in range(20):
+            self.env = gym.make(self.params['env_name'], render_mode='rgb_array_list')
+            self.epsilon = 0.0
+            obs, _ = self.env.reset()
+            for _ in range(max_frame):
+                action = self.get_action(obs)
+                obs, reward, terminated, truncated, info = self.env.step(action)
+                if terminated or truncated:
+                    break
+            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
 
 
 class ReplayMemory:

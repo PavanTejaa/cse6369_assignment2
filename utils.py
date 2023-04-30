@@ -28,9 +28,13 @@ def apply_discount(raw_reward, gamma=0.99):
     raw_reward.reverse()
     discounted_rtg_reward.reverse()
     # Normalization
-    discounted_rtg_reward = np.array(discounted_rtg_reward)
-    discounted_rtg_reward = discounted_rtg_reward - np.mean(discounted_rtg_reward) / (np.std(discounted_rtg_reward) + np.finfo(np.float32).eps)
-    return torch.tensor(discounted_rtg_reward, dtype=torch.float32, device=get_device())
+    #print(discounted_rtg_reward)
+    numpy_list = [x.detach().numpy() for x in discounted_rtg_reward]
+    discounted_rtg_reward = numpy_list - np.mean(numpy_list) / (np.std(numpy_list) + np.finfo(np.float32).eps)
+    # sol = torch.tensor(discounted_rtg_reward, dtype=torch.float32, device=get_device(), requires_grad=True)
+    # print(sol)
+    # print(0/0)
+    return torch.tensor(discounted_rtg_reward, dtype=torch.float32, device=get_device(), requires_grad=True)
 
 
 

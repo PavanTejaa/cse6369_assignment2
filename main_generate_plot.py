@@ -37,7 +37,7 @@ def main():
         for file in file_list:
             with open(file, 'rb') as f:
                 values_list = pickle.load(f)
-                label = 'T0' if 't0' in file else 'T1' if 't1' in file else 'T2' if 't2' in file else file
+                label = 'T3' if 't3' in file else 'T4' if 't4' in file else file
                 sns.lineplot(data=values_list, linestyle='--', label=label)
         
     plt.xlabel('Episodes', fontsize=20, labelpad=-2)
