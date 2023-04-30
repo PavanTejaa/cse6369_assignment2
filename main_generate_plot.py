@@ -22,7 +22,7 @@ def main():
     if(exp_type == '0'):
         file_list = [f for f in os.listdir(dir_path) if f.endswith(extension) and exp_name in f and ('t0' in f or 't1' in f or 't2' in f)]
         file_name = ''
-
+        file_list.sort()
         # Plot the data
         for file in file_list:
             with open(file, 'rb') as f:
@@ -32,7 +32,7 @@ def main():
     else:
         file_list = [f for f in os.listdir(dir_path) if f.endswith(extension) and exp_name in f and ('t3' in f or 't4' in f)]
         file_name = ''
-
+        file_list.sort()
         # Plot the data
         for file in file_list:
             with open(file, 'rb') as f:

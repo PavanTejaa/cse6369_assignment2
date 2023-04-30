@@ -9,8 +9,7 @@ from torch import nn
 from torch.optim import Adam
 from torch.distributions import Categorical
 from utils import *
-from moviepy.config import change_settings
-change_settings({"FFMPEG_BINARY": "/usr/bin/ffmpeg"})
+
 
 # Class for training an RL agent with Actor-Critic
 class ACTrainer:
@@ -63,7 +62,7 @@ class ACTrainer:
             
             for critic_epoch_idx in range(self.params['n_critic_epoch']):
                 
-                self.critic_optimizer.zero_grad()
+                
                 # I think we need to update state values in each epoch because critic_net is being updated every time 
                 # and we need to calculate state values using updated critic_net. Otherwise, in a particular iteration, 
                 # for n epochs, neither state values change nor target values change 
@@ -72,13 +71,14 @@ class ACTrainer:
                 critic_loss = self.estimate_critic_loss_function()
                 # critic_loss_copy = critic_loss.clone()
                 # critic_loss_copy.to(torch.float)
-                print('Iteration:',critic_iter_idx,' Epoch:', critic_epoch_idx, critic_loss)
+                # print('Iteration:',critic_iter_idx,' Epoch:', critic_epoch_idx, critic_loss)
                 # print('critic_loss.shape:', critic_loss.shape)
                 # print('critic_loss_copy.shape:', critic_loss_copy.shape)
                 # print('critic_loss.version:', critic_loss._version)
                 # print('critic_loss_copy.version:', critic_loss_copy._version)
                 critic_loss.backward(retain_graph = True)
                 self.critic_optimizer.step()
+                self.critic_optimizer.zero_grad()
 
     def update_target_value(self, gamma=0.99):
         # TODO: Update target values
@@ -122,6 +122,9 @@ class ACTrainer:
         # TODO: Estimate advantage
         # HINT: Use definition of advantage-estimate from equation 6 of teh assignment PDF
         #self.trajectory['advantage'] = [a - b for a, b in zip(self.trajectory['target_value'], self.trajectory['state_value'])]
+        #Fetching the upated values from the Critic Model with updated weights
+        self.update_state_values()
+        self.update_target_value()
         state_values = self.trajectory['state_value']
         target_values = self.trajectory['target_value']
         advantage_values = list()
@@ -131,9 +134,8 @@ class ACTrainer:
             advantage_values_idx = list()
             for i in range(len(state_values_idx)):
                 adv = target_values_idx[i] - state_values_idx[i]
-                advantage_values_idx.append(adv)
+                advantage_values_idx.append(adv.detach())
             advantage_values.append(advantage_values_idx)
-
         self.trajectory['advantage'] = advantage_values
 
     def update_actor_net(self):
@@ -169,6 +171,8 @@ class ACTrainer:
         log_probabilities_list = self.trajectory.get('log_prob')
         for t_idx in range(self.params['n_trajectory_per_rollout']):
             log_probabilities_list_idx = log_probabilities_list[t_idx]
+            # print(self.trajectory['advantage'][t_idx][0])
+            # print('#################')
             advantage = apply_discount(self.trajectory['advantage'][t_idx])
             # TODO: Compute actor loss function
             loss_idx = 0
@@ -177,11 +181,11 @@ class ACTrainer:
                     log_probabilities_list_idx[idx]*advantage[idx]
             actor_loss.append(loss_idx*-1)
         actor_loss = torch.stack(actor_loss).mean()
+        #print('ACTOR LOSS: ', actor_loss)
         return actor_loss
 
     def generate_video(self, max_frame=1000):
         # Generating the video multiple times with random initial states instead of just oneand saving them in folder structure according to the trails
-        print('MAX FRAME:', max_frame)
         for i in range(20):
             self.env = gym.make(
                 self.params['env_name'], render_mode='rgb_array_list')
@@ -193,8 +197,8 @@ class ACTrainer:
                     self.agent.action_space[action_idx.item()])
                 if terminated or truncated:
                     break
-            save_video(frames=self.env.render(
-            ), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
+            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3]+'/'+self.params['exp_name'][-2:], name_prefix=(self.params['exp_name'])+'_video'+str(i),fps=self.env.metadata['render_fps'], step_starting_index=1, episode_index=1)
+
 
 
 # CLass for actor-net
@@ -431,8 +435,8 @@ class DQNTrainer:
                     action)
                 if terminated or truncated:
                     break
-            save_video(frames=self.env.render(
-            ), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
+            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3]+'/'+self.params['exp_name'][-2:], name_prefix=(self.params['exp_name'])+'_video'+str(i),fps=self.env.metadata['render_fps'], step_starting_index=1, episode_index=1)
+
 
 
 class ReplayMemory:
