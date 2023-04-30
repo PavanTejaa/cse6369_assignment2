@@ -9,7 +9,8 @@ from torch import nn
 from torch.optim import Adam
 from torch.distributions import Categorical
 from utils import *
-
+from moviepy.config import change_settings
+change_settings({"FFMPEG_BINARY": "/usr/bin/ffmpeg"})
 
 # Class for training an RL agent with Actor-Critic
 class ACTrainer:
@@ -17,16 +18,21 @@ class ACTrainer:
         self.params = params
         self.env = gym.make(self.params['env_name'])
         self.agent = ACAgent(env=self.env, params=self.params)
-        self.actor_net = ActorNet(input_size=self.env.observation_space.shape[0], output_size=self.env.action_space.n, hidden_dim=self.params['hidden_dim']).to(get_device())
-        self.critic_net = CriticNet(input_size=self.env.observation_space.shape[0], output_size=1, hidden_dim=self.params['hidden_dim']).to(get_device())
-        self.actor_optimizer = Adam(params=self.actor_net.parameters(), lr=self.params['actor_lr'])
-        self.critic_optimizer = Adam(params=self.critic_net.parameters(), lr=self.params['critic_lr'])
+        self.actor_net = ActorNet(
+            input_size=self.env.observation_space.shape[0], output_size=self.env.action_space.n, hidden_dim=self.params['hidden_dim']).to(get_device())
+        self.critic_net = CriticNet(
+            input_size=self.env.observation_space.shape[0], output_size=1, hidden_dim=self.params['hidden_dim']).to(get_device())
+        self.actor_optimizer = Adam(
+            params=self.actor_net.parameters(), lr=self.params['actor_lr'])
+        self.critic_optimizer = Adam(
+            params=self.critic_net.parameters(), lr=self.params['critic_lr'])
         self.trajectory = None
 
     def run_training_loop(self):
         list_ro_reward = list()
         for ro_idx in range(self.params['n_rollout']):
-            self.trajectory = self.agent.collect_trajectory(policy=self.actor_net)
+            self.trajectory = self.agent.collect_trajectory(
+                policy=self.actor_net)
             self.update_critic_net()
             self.estimate_advantage()
             self.update_actor_net()
@@ -34,10 +40,11 @@ class ACTrainer:
             # HINT: Add all the rewards from each trajectory. There should be "ntr" trajectories within a single rollout.
             sum_of_rewards = 0
             reward_list = self.trajectory.get('reward')
-            for trajectory_reward_list in reward_list:\
+            for trajectory_reward_list in reward_list:
                 sum_of_rewards += apply_return(trajectory_reward_list)
             avg_ro_reward = (sum_of_rewards/len(reward_list)).item()
-            print(f'End of rollout {ro_idx}: Average trajectory reward is {avg_ro_reward: 0.2f}')
+            print(
+                f'End of rollout {ro_idx}: Average trajectory reward is {avg_ro_reward: 0.2f}')
             # Append average rollout reward into a list
             list_ro_reward.append(avg_ro_reward)
         # Save avg-rewards as pickle files
@@ -50,48 +57,67 @@ class ACTrainer:
         self.env.close()
 
     def update_critic_net(self):
+        torch.autograd.set_detect_anomaly(True)
         for critic_iter_idx in range(self.params['n_critic_iter']):
             self.update_target_value()
+            
             for critic_epoch_idx in range(self.params['n_critic_epoch']):
-                critic_loss = self.estimate_critic_loss_function()
-                critic_loss.backward()
-                self.critic_optimizer.step()
+                
                 self.critic_optimizer.zero_grad()
+                # I think we need to update state values in each epoch because critic_net is being updated every time 
+                # and we need to calculate state values using updated critic_net. Otherwise, in a particular iteration, 
+                # for n epochs, neither state values change nor target values change 
+                # and so we loss value does not change which implies no meaning for multiple epochs we are performing
+                self.update_state_values()
+                critic_loss = self.estimate_critic_loss_function()
+                # critic_loss_copy = critic_loss.clone()
+                # critic_loss_copy.to(torch.float)
+                print('Iteration:',critic_iter_idx,' Epoch:', critic_epoch_idx, critic_loss)
+                # print('critic_loss.shape:', critic_loss.shape)
+                # print('critic_loss_copy.shape:', critic_loss_copy.shape)
+                # print('critic_loss.version:', critic_loss._version)
+                # print('critic_loss_copy.version:', critic_loss_copy._version)
+                critic_loss.backward(retain_graph = True)
+                self.critic_optimizer.step()
 
     def update_target_value(self, gamma=0.99):
         # TODO: Update target values
         # HINT: Use definition of target-estimate from equation 7 of teh assignment PDF
-        
+
         trajectory_observations = self.trajectory['obs']
         trajectory_rewards = self.trajectory['reward']
-        trajectory_state_values = list()
-        trajectory_target_values = list()
-        
+        trajectory_target_values = []
+
+        for trajectory_idx in range(len(trajectory_observations)):
+            trajectory_rewards_idx = trajectory_rewards[trajectory_idx]
+            rewards_tensor = torch.tensor(trajectory_rewards_idx, dtype=torch.float32).unsqueeze(1).detach()
+            obs_tensor = trajectory_observations[trajectory_idx]
+            next_obs_tensor = torch.cat([obs_tensor[1:].clone(), torch.zeros(1, obs_tensor.shape[1])], dim=0)
+            next_state_values_tensor = self.critic_net(next_obs_tensor)
+            target_values_tensor = rewards_tensor + gamma * next_state_values_tensor.detach()
+            trajectory_target_values.append(target_values_tensor)
+
+        self.trajectory['target_value'] = trajectory_target_values
+
+
+    def update_state_values(self):
+        trajectory_observations = self.trajectory['obs']
+        trajectory_state_values = []
+
         for trajectory_idx in range(len(trajectory_observations)):
             trajectory_observations_idx = trajectory_observations[trajectory_idx]
-            trajectory_rewards_idx = trajectory_rewards[trajectory_idx]
-            state_values_list = list()
-            target_values_list = list()
+            #obs_tensor = torch.tensor(trajectory_observations_idx, dtype=torch.float32)
+            state_values_tensor = self.critic_net(trajectory_observations_idx)
+            trajectory_state_values.append(state_values_tensor)
+            #print(trajectory_observations_idx)
+            #print(obs_tensor)
+            #print(state_values_tensor)
             
-            for i in range(len(trajectory_observations_idx)):
-                current_state = trajectory_observations_idx[i]
-                # Setting next state as None if current state is last state of trajectory
-                next_state = trajectory_observations_idx[i+1] if (i+1 < len(trajectory_observations_idx)) else None
-                
-                state_value = self.critic_net(current_state)
-                if(next_state is not None):
-                    target_value = trajectory_rewards_idx[i] + gamma*self.critic_net(next_state)
-                else:
-                    target_value = trajectory_rewards_idx[i] 
-                state_values_list.append(state_value)
-                target_values_list.append(target_value)
-            trajectory_state_values.append(state_values_list)
-            trajectory_target_values.append(target_values_list)
-            
+        # print(trajectory_state_values)
+        # print(0/0)
         self.trajectory['state_value'] = trajectory_state_values
-        self.trajectory['target_value'] = trajectory_target_values
-        
-
+            
+    
     def estimate_advantage(self, gamma=0.99):
         # TODO: Estimate advantage
         # HINT: Use definition of advantage-estimate from equation 6 of teh assignment PDF
@@ -107,10 +133,9 @@ class ACTrainer:
                 adv = target_values_idx[i] - state_values_idx[i]
                 advantage_values_idx.append(adv)
             advantage_values.append(advantage_values_idx)
-            
+
         self.trajectory['advantage'] = advantage_values
-        
-        
+
     def update_actor_net(self):
         actor_loss = self.estimate_actor_loss_function()
         actor_loss.backward()
@@ -120,20 +145,23 @@ class ACTrainer:
     def estimate_critic_loss_function(self):
         # TODO: Compute critic loss function
         # HINT: Use definition of critic-loss from equation 7 of teh assignment PDF. It is the MSE between target-values and state-values.
-        
+
         state_values = self.trajectory['state_value']
         target_values = self.trajectory['target_value']
-        #print(state_values[0])
-        #print(target_values[0])
-        #print(len(self.trajectory['obs']))
-        
-        critic_loss = 0
+        fn = torch.nn.MSELoss()
+        critic_loss = torch.tensor(0.0, dtype=torch.float32, device=get_device())
         for trajectory_idx in range(len(state_values)):
             state_values_idx = state_values[trajectory_idx]
             target_values_idx = target_values[trajectory_idx]
-            for i in range(len(state_values_idx)):
-                critic_loss += (state_values_idx[i] - target_values_idx[i]) ** 2
-
+            # state_values_tensor = torch.stack(state_values_idx).squeeze()  # Convert state_values_idx to a PyTorch tensor and detach it
+            # target_values_tensor = torch.stack(target_values_idx).squeeze()  # Convert target_values_idx to a PyTorch tensor
+            # print(state_values_tensor)
+            # print(target_values_tensor)
+            # print(state_values_idx)
+            # print(target_values_idx)
+            #print(0/0)
+            critic_loss = critic_loss + fn(state_values_idx, target_values_idx)
+        #print(critic_loss)
         return critic_loss
 
     def estimate_actor_loss_function(self):
@@ -145,7 +173,8 @@ class ACTrainer:
             # TODO: Compute actor loss function
             loss_idx = 0
             for idx in range(len(log_probabilities_list_idx)):
-                loss_idx = loss_idx + log_probabilities_list_idx[idx]*advantage[idx]
+                loss_idx = loss_idx + \
+                    log_probabilities_list_idx[idx]*advantage[idx]
             actor_loss.append(loss_idx*-1)
         actor_loss = torch.stack(actor_loss).mean()
         return actor_loss
@@ -154,14 +183,18 @@ class ACTrainer:
         # Generating the video multiple times with random initial states instead of just oneand saving them in folder structure according to the trails
         print('MAX FRAME:', max_frame)
         for i in range(20):
-            self.env = gym.make(self.params['env_name'], render_mode='rgb_array_list')
+            self.env = gym.make(
+                self.params['env_name'], render_mode='rgb_array_list')
             obs, _ = self.env.reset()
             for _ in range(max_frame):
-                action_idx, log_prob = self.actor_net(torch.tensor(obs, dtype=torch.float32, device=get_device()))
-                obs, reward, terminated, truncated, info = self.env.step(self.agent.action_space[action_idx.item()])
+                action_idx, log_prob = self.actor_net(torch.tensor(
+                    obs, dtype=torch.float32, device=get_device()))
+                obs, reward, terminated, truncated, info = self.env.step(
+                    self.agent.action_space[action_idx.item()])
                 if terminated or truncated:
                     break
-            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
+            save_video(frames=self.env.render(
+            ), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
 
 
 # CLass for actor-net
@@ -215,19 +248,23 @@ class ACAgent:
     def __init__(self, env, params=None):
         self.env = env
         self.params = params
-        self.action_space = [action for action in range(self.env.action_space.n)]
+        self.action_space = [
+            action for action in range(self.env.action_space.n)]
 
     def collect_trajectory(self, policy):
         obs, _ = self.env.reset(seed=self.params['rng_seed'])
         rollout_buffer = list()
         for _ in range(self.params['n_trajectory_per_rollout']):
-            trajectory_buffer = {'obs': list(), 'log_prob': list(), 'reward': list()}
+            trajectory_buffer = {
+                'obs': list(), 'log_prob': list(), 'reward': list()}
             while True:
-                obs = torch.tensor(obs, dtype=torch.float32, device=get_device())
+                obs = torch.tensor(obs, dtype=torch.float32,
+                                   device=get_device())
                 # Save observation
                 trajectory_buffer['obs'].append(obs)
                 action_idx, log_prob = policy(obs)
-                obs, reward, terminated, truncated, info = self.env.step(self.action_space[action_idx.item()])
+                obs, reward, terminated, truncated, info = self.env.step(
+                    self.action_space[action_idx.item()])
                 # Save log-prob and reward into the buffer
                 trajectory_buffer['log_prob'].append(log_prob)
                 trajectory_buffer['reward'].append(reward)
@@ -242,10 +279,13 @@ class ACAgent:
     # Converts a list-of-dictionary into dictionary-of-list
     @staticmethod
     def serialize_trajectory(rollout_buffer):
-        serialized_buffer = {'obs': list(), 'log_prob': list(), 'reward': list()}
+        serialized_buffer = {
+            'obs': list(), 'log_prob': list(), 'reward': list()}
         for trajectory_buffer in rollout_buffer:
-            serialized_buffer['obs'].append(torch.stack(trajectory_buffer['obs']))
-            serialized_buffer['log_prob'].append(torch.stack(trajectory_buffer['log_prob']))
+            serialized_buffer['obs'].append(
+                torch.stack(trajectory_buffer['obs']))
+            serialized_buffer['log_prob'].append(
+                torch.stack(trajectory_buffer['log_prob']))
             serialized_buffer['reward'].append(trajectory_buffer['reward'])
         return serialized_buffer
 
@@ -254,11 +294,14 @@ class DQNTrainer:
     def __init__(self, params):
         self.params = params
         self.env = gym.make(self.params['env_name'])
-        self.q_net = QNet(input_size=self.env.observation_space.shape[0], output_size=self.env.action_space.n, hidden_dim=self.params['hidden_dim']).to(get_device())
-        self.target_net = QNet(input_size=self.env.observation_space.shape[0], output_size=self.env.action_space.n, hidden_dim=self.params['hidden_dim']).to(get_device())
+        self.q_net = QNet(
+            input_size=self.env.observation_space.shape[0], output_size=self.env.action_space.n, hidden_dim=self.params['hidden_dim']).to(get_device())
+        self.target_net = QNet(
+            input_size=self.env.observation_space.shape[0], output_size=self.env.action_space.n, hidden_dim=self.params['hidden_dim']).to(get_device())
         self.target_net.load_state_dict(self.q_net.state_dict())
         self.epsilon = self.params['init_epsilon']
-        self.optimizer = Adam(params=self.q_net.parameters(), lr=self.params['lr'])
+        self.optimizer = Adam(
+            params=self.q_net.parameters(), lr=self.params['lr'])
         self.replay_memory = ReplayMemory(capacity=self.params['rm_cap'])
 
     def run_training_loop(self):
@@ -269,16 +312,21 @@ class DQNTrainer:
             while True:
                 ep_len += 1
                 action = self.get_action(obs)
-                next_obs, reward, terminated, truncated, info = self.env.step(action)
+                next_obs, reward, terminated, truncated, info = self.env.step(
+                    action)
                 if terminated or truncated:
-                    self.epsilon = max(self.epsilon*self.params['epsilon_decay'], self.params['min_epsilon'])
+                    self.epsilon = max(
+                        self.epsilon*self.params['epsilon_decay'], self.params['min_epsilon'])
                     #next_obs = None
-                    self.replay_memory.push(obs, action, reward, next_obs, not (terminated or truncated))
+                    self.replay_memory.push(
+                        obs, action, reward, next_obs, not (terminated or truncated))
                     list_ep_reward.append(ep_len)
-                    print(f'End of episode {idx_episode} with epsilon = {self.epsilon: 0.2f} and reward = {ep_len}, memory = {len(self.replay_memory.buffer)}')
+                    print(
+                        f'End of episode {idx_episode} with epsilon = {self.epsilon: 0.2f} and reward = {ep_len}, memory = {len(self.replay_memory.buffer)}')
                     obs, _ = self.env.reset()
                     break
-                self.replay_memory.push(obs, action, reward, next_obs, not (terminated or truncated))
+                self.replay_memory.push(
+                    obs, action, reward, next_obs, not (terminated or truncated))
                 obs = copy.deepcopy(next_obs)
                 self.update_q_net()
                 self.update_target_net()
@@ -297,12 +345,13 @@ class DQNTrainer:
         # '1-ε' probability, and a random action with 'ε' probability.
         with torch.no_grad():
             qValues = self.q_net(torch.tensor(obs, device=get_device()))
-            if(np.random.random_sample() < self.epsilon ):
+            if(np.random.random_sample() < self.epsilon):
                 return self.env.action_space.sample()
             else:
                 maxQValue = qValues.max()
-                actionWithMaxQValue = torch.where(qValues == maxQValue)[0][0].item()
-                
+                actionWithMaxQValue = torch.where(
+                    qValues == maxQValue)[0][0].item()
+
                 return actionWithMaxQValue
 
     def update_q_net(self):
@@ -312,34 +361,36 @@ class DQNTrainer:
         # HINT: You should draw a batch of random samples from the replay buffer
         # and train your Q-net with that sampled batch.
 
-        observations, actions, rewards, next_observations, statuses = self.replay_memory.sample(self.params['batch_size'])
+        observations, actions, rewards, next_observations, statuses = self.replay_memory.sample(
+            self.params['batch_size'])
 
         observations = torch.tensor(observations, device=get_device())
         actions = torch.tensor(actions, device=get_device())
         rewards = torch.tensor(rewards, device=get_device())
         #next_observations = [obs if obs is not None else np.nan for obs in next_observations]
 
-        next_observations = torch.tensor(next_observations, device=get_device())
+        next_observations = torch.tensor(
+            next_observations, device=get_device())
         statuses = torch.tensor(statuses, device=get_device())
-        
-    
+
         # For Predicted Value
         # This contains qValues for all possible actions for each observation in observations
         qValues = self.q_net.forward(observations)
-        
+
         #predicted_state_values = torch.tensor(qValues[range(self.params['batch_size']), i] for i in actions)
         # print(qValues[1])
         # print(actions[1])
-        predicted_state_values = qValues[range(self.params['batch_size']), actions]
+        predicted_state_values = qValues[range(
+            self.params['batch_size']), actions]
         # print(predicted_state_values[1])
         # For Target Value
-        
-        with torch.no_grad():    
+
+        with torch.no_grad():
             targetQValues = self.target_net(next_observations)
-        
+
         target_values = targetQValues.max(1)[0]
         target_values[statuses == False] = 0
-        #print(target_values)
+        # print(target_values)
         target_values = rewards + self.params['gamma'] * target_values
 
         # operation = lambda x: torch.tensor(round(x.item()))
@@ -348,9 +399,10 @@ class DQNTrainer:
         # print('Update Step: ', self.updateSteps)
         # print('Predicted Value:', predicted_state_values)
         # print('Target Value:', new_tensor_list)
-        
+
         criterion = nn.SmoothL1Loss()
-        q_loss = criterion(predicted_state_values.unsqueeze(1), target_values.unsqueeze(1))
+        q_loss = criterion(predicted_state_values.unsqueeze(
+            1), target_values.unsqueeze(1))
         self.optimizer.zero_grad()
         q_loss.backward()
         self.optimizer.step()
@@ -361,22 +413,26 @@ class DQNTrainer:
         q_net_state_dict = self.q_net.state_dict()
         target_net_state_dict = self.target_net.state_dict()
         for key in q_net_state_dict:
-            target_net_state_dict[key] = self.params['tau']*q_net_state_dict[key] + (1 - self.params['tau'])*target_net_state_dict[key]
+            target_net_state_dict[key] = self.params['tau']*q_net_state_dict[key] + (
+                1 - self.params['tau'])*target_net_state_dict[key]
         self.target_net.load_state_dict(target_net_state_dict)
 
     def generate_video(self, max_frame=1000):
-         # Generating the video multiple times with random initial states instead of just oneand saving them in folder structure according to the trails
+        # Generating the video multiple times with random initial states instead of just oneand saving them in folder structure according to the trails
         print('MAX FRAME:', max_frame)
         for i in range(20):
-            self.env = gym.make(self.params['env_name'], render_mode='rgb_array_list')
+            self.env = gym.make(
+                self.params['env_name'], render_mode='rgb_array_list')
             self.epsilon = 0.0
             obs, _ = self.env.reset()
             for _ in range(max_frame):
                 action = self.get_action(obs)
-                obs, reward, terminated, truncated, info = self.env.step(action)
+                obs, reward, terminated, truncated, info = self.env.step(
+                    action)
                 if terminated or truncated:
                     break
-            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
+            save_video(frames=self.env.render(
+            ), video_folder=self.params['env_name'][:-3], fps=self.env.metadata['render_fps'], step_starting_index=0, episode_index=0)
 
 
 class ReplayMemory:
@@ -390,7 +446,8 @@ class ReplayMemory:
 
     def sample(self, n_samples):
         samples = random.sample(self.buffer, n_samples)
-        observations, actions, rewards, next_observations, statuses = list(), list(), list(), list(), list()
+        observations, actions, rewards, next_observations, statuses = list(
+        ), list(), list(), list(), list()
         for sample in samples:
             observations.append(sample[0])
             actions.append(sample[1])
@@ -405,7 +462,7 @@ class QNet(nn.Module):
     # This is identical to policy network from HW1 but we are not using Softmax layer at the end as this network gives the Q value but not the probabilities unlike PG Method
     def __init__(self, input_size, output_size, hidden_dim):
         super(QNet, self).__init__()
-        self.ff_net =  nn.Sequential(
+        self.ff_net = nn.Sequential(
             nn.Linear(input_size, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
@@ -415,4 +472,3 @@ class QNet(nn.Module):
 
     def forward(self, obs):
         return self.ff_net(obs)
-
