@@ -40,12 +40,12 @@ def main():
                 label = 'T3' if 't3' in file else 'T4' if 't4' in file else file
                 sns.lineplot(data=values_list, linestyle='--', label=label)
         
-    plt.xlabel('Episodes', fontsize=20, labelpad=-2)
-    plt.ylabel('Reward', fontsize=20)
+    plt.xlabel('Episodes', fontsize=16, labelpad=-2)
+    plt.ylabel('Reward', fontsize=16)
     # Setting the plot range values according to the experiment to visualise it better
     box_values = range(-200, 250, 50) if exp_name in 'LunarLand' else range(0,550,50)
     plt.yticks(box_values)
-    plt.title('Learning curve for '+ exp_name,fontsize=25)
+    plt.title('Learning curve for '+ exp_name,fontsize=20)
     plt.legend()
     plt.grid()
     plt.show()

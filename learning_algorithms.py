@@ -59,24 +59,16 @@ class ACTrainer:
         torch.autograd.set_detect_anomaly(True)
         for critic_iter_idx in range(self.params['n_critic_iter']):
             self.update_target_value()
-            
+
             for critic_epoch_idx in range(self.params['n_critic_epoch']):
-                
-                
-                # I think we need to update state values in each epoch because critic_net is being updated every time 
-                # and we need to calculate state values using updated critic_net. Otherwise, in a particular iteration, 
-                # for n epochs, neither state values change nor target values change 
+
+                # I think we need to update state values in each epoch because critic_net is being updated every time
+                # and we need to calculate state values using updated critic_net. Otherwise, in a particular iteration,
+                # for n epochs, neither state values change nor target values change
                 # and so we loss value does not change which implies no meaning for multiple epochs we are performing
                 self.update_state_values()
                 critic_loss = self.estimate_critic_loss_function()
-                # critic_loss_copy = critic_loss.clone()
-                # critic_loss_copy.to(torch.float)
-                # print('Iteration:',critic_iter_idx,' Epoch:', critic_epoch_idx, critic_loss)
-                # print('critic_loss.shape:', critic_loss.shape)
-                # print('critic_loss_copy.shape:', critic_loss_copy.shape)
-                # print('critic_loss.version:', critic_loss._version)
-                # print('critic_loss_copy.version:', critic_loss_copy._version)
-                critic_loss.backward(retain_graph = True)
+                critic_loss.backward(retain_graph=True)
                 self.critic_optimizer.step()
                 self.critic_optimizer.zero_grad()
 
@@ -92,6 +84,7 @@ class ACTrainer:
             trajectory_rewards_idx = trajectory_rewards[trajectory_idx]
             rewards_tensor = torch.tensor(trajectory_rewards_idx, dtype=torch.float32).unsqueeze(1).detach()
             obs_tensor = trajectory_observations[trajectory_idx]
+            # creating next_observatins tensor with values from observations from index 1 to n-1 and adding 0 as last element because it is terminal 
             next_obs_tensor = torch.cat([obs_tensor[1:].clone(), torch.zeros(1, obs_tensor.shape[1])], dim=0)
             next_state_values_tensor = self.critic_net(next_obs_tensor)
             target_values_tensor = rewards_tensor + gamma * next_state_values_tensor.detach()
@@ -99,30 +92,22 @@ class ACTrainer:
 
         self.trajectory['target_value'] = trajectory_target_values
 
-
     def update_state_values(self):
         trajectory_observations = self.trajectory['obs']
         trajectory_state_values = []
 
         for trajectory_idx in range(len(trajectory_observations)):
             trajectory_observations_idx = trajectory_observations[trajectory_idx]
-            #obs_tensor = torch.tensor(trajectory_observations_idx, dtype=torch.float32)
             state_values_tensor = self.critic_net(trajectory_observations_idx)
             trajectory_state_values.append(state_values_tensor)
-            #print(trajectory_observations_idx)
-            #print(obs_tensor)
-            #print(state_values_tensor)
-            
-        # print(trajectory_state_values)
-        # print(0/0)
+           
+
         self.trajectory['state_value'] = trajectory_state_values
-            
-    
+
     def estimate_advantage(self, gamma=0.99):
         # TODO: Estimate advantage
         # HINT: Use definition of advantage-estimate from equation 6 of teh assignment PDF
-        #self.trajectory['advantage'] = [a - b for a, b in zip(self.trajectory['target_value'], self.trajectory['state_value'])]
-        #Fetching the upated values from the Critic Model with updated weights
+        # Fetching the upated state and target values predicted by the Critic Model with updated weights
         self.update_state_values()
         self.update_target_value()
         state_values = self.trajectory['state_value']
@@ -150,20 +135,12 @@ class ACTrainer:
 
         state_values = self.trajectory['state_value']
         target_values = self.trajectory['target_value']
-        fn = torch.nn.MSELoss()
         critic_loss = torch.tensor(0.0, dtype=torch.float32, device=get_device())
+        
         for trajectory_idx in range(len(state_values)):
             state_values_idx = state_values[trajectory_idx]
             target_values_idx = target_values[trajectory_idx]
-            # state_values_tensor = torch.stack(state_values_idx).squeeze()  # Convert state_values_idx to a PyTorch tensor and detach it
-            # target_values_tensor = torch.stack(target_values_idx).squeeze()  # Convert target_values_idx to a PyTorch tensor
-            # print(state_values_tensor)
-            # print(target_values_tensor)
-            # print(state_values_idx)
-            # print(target_values_idx)
-            #print(0/0)
-            critic_loss = critic_loss + fn(state_values_idx, target_values_idx)
-        #print(critic_loss)
+            critic_loss = critic_loss + torch.sum((state_values_idx - target_values_idx)**2)
         return critic_loss
 
     def estimate_actor_loss_function(self):
@@ -181,7 +158,6 @@ class ACTrainer:
                     log_probabilities_list_idx[idx]*advantage[idx]
             actor_loss.append(loss_idx*-1)
         actor_loss = torch.stack(actor_loss).mean()
-        #print('ACTOR LOSS: ', actor_loss)
         return actor_loss
 
     def generate_video(self, max_frame=1000):
@@ -197,8 +173,8 @@ class ACTrainer:
                     self.agent.action_space[action_idx.item()])
                 if terminated or truncated:
                     break
-            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3]+'/'+self.params['exp_name'][-2:], name_prefix=(self.params['exp_name'])+'_video'+str(i),fps=self.env.metadata['render_fps'], step_starting_index=1, episode_index=1)
-
+            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3]+'/'+self.params['exp_name'][-2:], name_prefix=(
+                self.params['exp_name'])+'_video'+str(i), fps=self.env.metadata['render_fps'], step_starting_index=1, episode_index=1)
 
 
 # CLass for actor-net
@@ -232,6 +208,8 @@ class CriticNet(nn.Module):
         super(CriticNet, self).__init__()
         # TODO: Define the critic net
         # HINT: You can use nn.Sequential to set up a 2 layer feedforward neural network.
+        # This is identical to policy network from HW1 but we are not using Softmax layer at the end as this network gives
+        # the action values but not the probabilities unlike PG Method
         self.ff_net = nn.Sequential(
             nn.Linear(input_size, hidden_dim),
             nn.ReLU(),
@@ -347,9 +325,13 @@ class DQNTrainer:
         # TODO: Implement the epsilon-greedy behavior
         # HINT: The agent will will choose action based on maximum Q-value with
         # '1-ε' probability, and a random action with 'ε' probability.
+        
+        # The agent selects a random value in the range [0,1] and if that value is below eps, it selects a random action 
+        # else it selects action with max Q value 
         with torch.no_grad():
             qValues = self.q_net(torch.tensor(obs, device=get_device()))
-            if(np.random.random_sample() < self.epsilon):
+            random_value = np.random.random_sample()
+            if(random_value < self.epsilon):
                 return self.env.action_space.sample()
             else:
                 maxQValue = qValues.max()
@@ -367,42 +349,28 @@ class DQNTrainer:
 
         observations, actions, rewards, next_observations, statuses = self.replay_memory.sample(
             self.params['batch_size'])
-
-        observations = torch.tensor(observations, device=get_device())
+        observations = torch.tensor(np.array(observations), device=get_device())
         actions = torch.tensor(actions, device=get_device())
         rewards = torch.tensor(rewards, device=get_device())
         #next_observations = [obs if obs is not None else np.nan for obs in next_observations]
 
-        next_observations = torch.tensor(
-            next_observations, device=get_device())
+        next_observations = torch.tensor(np.array(next_observations), device=get_device())
         statuses = torch.tensor(statuses, device=get_device())
 
         # For Predicted Value
         # This contains qValues for all possible actions for each observation in observations
-        qValues = self.q_net.forward(observations)
-
-        #predicted_state_values = torch.tensor(qValues[range(self.params['batch_size']), i] for i in actions)
-        # print(qValues[1])
-        # print(actions[1])
-        predicted_state_values = qValues[range(
-            self.params['batch_size']), actions]
-        # print(predicted_state_values[1])
+        qValues = self.q_net(observations)
+        predicted_state_values = qValues[range(self.params['batch_size']), actions]
+        
         # For Target Value
-
+        # Using torch.no_grad because in this step we update critic_net just based on the values of predicted values 
+        # and difference between them and target values and here, target values are just the constant values
         with torch.no_grad():
             targetQValues = self.target_net(next_observations)
 
         target_values = targetQValues.max(1)[0]
         target_values[statuses == False] = 0
-        # print(target_values)
         target_values = rewards + self.params['gamma'] * target_values
-
-        # operation = lambda x: torch.tensor(round(x.item()))
-        # new_tensor_list = [operation(x) for x in target_values]
-        # self.updateSteps += 1
-        # print('Update Step: ', self.updateSteps)
-        # print('Predicted Value:', predicted_state_values)
-        # print('Target Value:', new_tensor_list)
 
         criterion = nn.SmoothL1Loss()
         q_loss = criterion(predicted_state_values.unsqueeze(
@@ -435,8 +403,8 @@ class DQNTrainer:
                     action)
                 if terminated or truncated:
                     break
-            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3]+'/'+self.params['exp_name'][-2:], name_prefix=(self.params['exp_name'])+'_video'+str(i),fps=self.env.metadata['render_fps'], step_starting_index=1, episode_index=1)
-
+            save_video(frames=self.env.render(), video_folder=self.params['env_name'][:-3]+'/'+self.params['exp_name'][-2:], name_prefix=(
+                self.params['exp_name'])+'_video'+str(i), fps=self.env.metadata['render_fps'], step_starting_index=1, episode_index=1)
 
 
 class ReplayMemory:
@@ -463,7 +431,8 @@ class ReplayMemory:
 
 class QNet(nn.Module):
     # TODO: Define Q-net
-    # This is identical to policy network from HW1 but we are not using Softmax layer at the end as this network gives the Q value but not the probabilities unlike PG Method
+    # This is identical to policy network from HW1 but we are not using Softmax layer at the end as this network gives the Q value
+    # but not the probabilities unlike PG Method
     def __init__(self, input_size, output_size, hidden_dim):
         super(QNet, self).__init__()
         self.ff_net = nn.Sequential(
